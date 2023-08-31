@@ -3,4 +3,23 @@ Logging:
     Default: "Information"
     Microsoft.AspNetCore: "Warning"
 
+Serilog:
+  Using:
+    - Serilog.Sinks.File
+    - Serilog.Sinks.Graylog
+    - Serilog.Formatting.Compact
+  MinimumLevel: Debug
+  WriteTo:
+    - Name: Console
+    - Name: File
+      Args:
+        path: C:\Logs\AutomateThis.log
+        formatter: Serilog.Formatting.Compact.CompactJsonFormatter, Serilog.Formatting.Compact
+        rollingInterval: Day
+    - Name: Graylog
+      Args:
+        hostnameOrAddress: graylog.internal.chris-cartwright.com
+        port: 12201
+        transportType: Udp
+
 AllowedHosts: "*"
