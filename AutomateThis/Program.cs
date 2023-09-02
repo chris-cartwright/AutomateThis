@@ -1,8 +1,14 @@
 using System.Diagnostics;
 using System.Reflection;
 using AutoMapper;
+using AutomateThis;
 using AutomateThis.Providers.OpenWeatherMap;
 using AutomateThis.Weather;
+using Microsoft.Extensions.Caching.Memory;
+using Polly;
+using Polly.Caching;
+using Polly.Caching.Memory;
+using Polly.Registry;
 using Refit;
 using Serilog.Events;
 using Serilog;
@@ -27,11 +33,17 @@ if (File.Exists(envConfig))
 	builder.Configuration.AddYamlFile(envConfig);
 }
 
+var memoryCache = new MemoryCache(new MemoryCacheOptions());
+var memoryCacheProvider = new MemoryCacheProvider(memoryCache);
+builder.Services.AddSingleton(memoryCacheProvider);
+builder.Services.AddSingleton<IAsyncCacheProvider>(memoryCacheProvider);
+builder.Services.AddRegistry();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApiDocument();
 builder.Services.AddAutoMapper(Assembly.GetExecutingAssembly());
 builder.Services
 	.AddRefitClient<IOpenWeatherMapApi>()
+	.AddPolicyHandlerFromRegistry(Policies.OpenWeatherMap)
 	.ConfigureHttpClient(c => c.BaseAddress = new Uri("https://api.openweathermap.org"));
 
 builder.Host.UseSerilog(
@@ -41,6 +53,7 @@ builder.Host.UseSerilog(
 		.Enrich.FromLogContext()
 		.MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
 );
+
 var app = builder.Build();
 Log.Logger.Debug("Build successful.");
 
@@ -48,20 +61,17 @@ app.UseSerilogRequestLogging();
 app.UseOpenApi();
 app.UseReDoc();
 
-Weather? currentWeather = null;
-app.MapGet("/weather", async (IOpenWeatherMapApi api, IMapper mapper) =>
+app.MapGet("/weather", async (IOpenWeatherMapApi api, IMapper mapper, IReadOnlyPolicyRegistry<string> policies) =>
 {
-	if (currentWeather is null || DateTimeOffset.Now - currentWeather.Timestamp >= TimeSpan.FromMinutes(30))
+	return await policies.Get<IAsyncPolicy<Weather>>(Policies.Weather).ExecuteAsync(async () =>
 	{
 		var response = await api.GetCurrentAsync(
 			app.Configuration["OpenWeatherMap:Location"] ?? throw new ArgumentNullException(),
 			"metric",
 			app.Configuration["OpenWeatherMap:ApiKey"] ?? throw new ArgumentNullException()
 		);
-		currentWeather = mapper.Map<Weather>(response.Content);
-	}
-
-	return currentWeather;
+		return mapper.Map<Weather>(response.Content);
+	});
 });
 
 if (app.Environment.IsDevelopment())
