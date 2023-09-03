@@ -27,6 +27,8 @@
     <PackageReference Include="Serilog.AspNetCore" Version="7.0.0" />
     <PackageReference Include="Serilog.Formatting.Compact" Version="1.1.0" />
     <PackageReference Include="Serilog.Sinks.Graylog" Version="3.0.2" />
+    <PackageReference Include="Stashbox" Version="8.2.0" />
+    <PackageReference Include="Stashbox.Extensions.Hosting" Version="5.3.0" />
   </ItemGroup>
 
 </Project>

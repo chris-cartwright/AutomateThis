@@ -3,15 +3,13 @@ using System.Reflection;
 using AutoMapper;
 using AutomateThis;
 using AutomateThis.Providers.OpenWeatherMap;
-using AutomateThis.Weather;
 using Microsoft.Extensions.Caching.Memory;
-using Polly;
 using Polly.Caching;
 using Polly.Caching.Memory;
-using Polly.Registry;
 using Refit;
 using Serilog.Events;
 using Serilog;
+using Stashbox;
 
 Log.Logger = new LoggerConfiguration()
 	.MinimumLevel.Override("Microsoft", LogEventLevel.Information)
@@ -33,11 +31,37 @@ if (File.Exists(envConfig))
 	builder.Configuration.AddYamlFile(envConfig);
 }
 
+var servicesContainer = new StashboxContainer(config =>
+{
+	config
+		.WithLifetimeValidation();
+});
+builder.Host.UseStashbox(servicesContainer);
+builder.Host.ConfigureContainer<IStashboxContainer>((ctx, container) =>
+{
+	if (ctx.HostingEnvironment.IsDevelopment())
+	{
+		try
+		{
+			container.Validate();
+		}
+		catch
+		{
+			var diagnostics = container.GetRegistrationDiagnostics();
+			foreach(var diagnostic in diagnostics.OrderBy(d => d.ServiceType.Name))
+			{
+				Debug.WriteLine(diagnostic);
+			}
+			throw;
+		}
+	}
+});
+
 var memoryCache = new MemoryCache(new MemoryCacheOptions());
 var memoryCacheProvider = new MemoryCacheProvider(memoryCache);
-builder.Services.AddSingleton(memoryCacheProvider);
-builder.Services.AddSingleton<IAsyncCacheProvider>(memoryCacheProvider);
-builder.Services.AddRegistry();
+servicesContainer.RegisterInstance(memoryCacheProvider);
+servicesContainer.RegisterInstance<IAsyncCacheProvider>(memoryCacheProvider);
+servicesContainer.AddRegistry();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApiDocument();
 builder.Services.AddAutoMapper(Assembly.GetExecutingAssembly());
@@ -45,6 +69,8 @@ builder.Services
 	.AddRefitClient<IOpenWeatherMapApi>()
 	.AddPolicyHandlerFromRegistry(Policies.OpenWeatherMap)
 	.ConfigureHttpClient(c => c.BaseAddress = new Uri("https://api.openweathermap.org"));
+builder.Services.AddControllers().AddControllersAsServices();
+builder.Services.AddSingleton(builder.Configuration);
 
 builder.Host.UseSerilog(
 	(context, services, configuration) => configuration
@@ -60,19 +86,7 @@ Log.Logger.Debug("Build successful.");
 app.UseSerilogRequestLogging();
 app.UseOpenApi();
 app.UseReDoc();
-
-app.MapGet("/weather", async (IOpenWeatherMapApi api, IMapper mapper, IReadOnlyPolicyRegistry<string> policies) =>
-{
-	return await policies.Get<IAsyncPolicy<Weather>>(Policies.Weather).ExecuteAsync(async () =>
-	{
-		var response = await api.GetCurrentAsync(
-			app.Configuration["OpenWeatherMap:Location"] ?? throw new ArgumentNullException(),
-			"metric",
-			app.Configuration["OpenWeatherMap:ApiKey"] ?? throw new ArgumentNullException()
-		);
-		return mapper.Map<Weather>(response.Content);
-	});
-});
+app.MapControllers();
 
 if (app.Environment.IsDevelopment())
 {
